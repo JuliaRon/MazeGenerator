@@ -176,8 +176,51 @@ void generateMaze(void) {
  * the cell above it.
  */
 void printMaze(void) {
-    /* TODO – Visuals team */
-    printf("[printMaze] Not yet implemented.\n");
+
+    /*  the TOP border of the maze */
+    for (int c = 0; c < COLS; c++) {
+        printf("⋆｡°✩");
+    }
+    printf("+\n");
+
+    for (int r = 0; r < ROWS; r++) {
+
+        /* cells with vertical walls */
+        for (int c = 0; c < COLS; c++) {
+
+            if (c == 0)
+                printf("|");   // left outer wall
+
+            /* Player / Goal / Empty space */
+            if (player[0] == c && player[1] == r)
+                printf(" P ");
+            else if (goal[0] == c && goal[1] == r)
+                printf(" G ");
+            else
+                printf("   ");
+
+            /* Right wall */
+            if (maze[r][c].wall_right)
+                printf("|");
+            else
+                printf(" ");
+        }
+
+        printf("\n");
+
+        /* Print bottom walls */
+        for (int c = 0; c < COLS; c++) {
+
+            printf("+");
+
+            if (maze[r][c].wall_bottom)
+                printf("---");
+            else
+                printf("   ");
+        }
+
+        printf("+\n");
+    }
 }
 
 /*
@@ -194,7 +237,17 @@ void printMaze(void) {
  * Could-have additions: show hints, timer, choose difficulty...
  */
 void printMenu(void) {
-    /* TODO – Visuals team */
+
+    printf("\n");
+    printf("=================================\n");
+    printf("        MAZE GENERATOR GAME      \n");
+    printf("=================================\n");
+    printf("1. Generate new maze\n");
+    printf("2. Play maze (W/A/S/D movement)\n");
+    printf("3. Solve maze\n");
+    printf("4. Exit\n");
+    printf("=================================\n");
+    printf("Choose an option: ");
 }
 
 /*
@@ -205,8 +258,15 @@ void printMenu(void) {
  * the next read works correctly.
  */
 char getUserInput(void) {
+   
     char c;
-    /* TODO – Visuals team */
+
+    scanf(" %c", &c);   // space ignores newline
+
+    /* clear remaining input */
+    while (getchar() != '\n');
+  
+
     return c;
 }
 
