@@ -253,7 +253,7 @@ void movePlayer(char direction) {
  */
 int checkWin(void) {
     /* TODO – Player Logic team */
-    return (1);
+    return (0);
 }
 
 /* ============================================================
