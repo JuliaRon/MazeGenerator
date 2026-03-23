@@ -30,6 +30,32 @@
 #include <string.h>
 #include <time.h>
 
+/* Raw mode: Unix/Mac only (Linux too).
+ * On Windows, remove this block and replace getUserInput()
+ * with:  char getUserInput(void) { return (char)_getch(); }
+ * and add  #include <conio.h>  at the top instead. */
+#ifdef _WIN32
+  #include <conio.h>
+#else
+  #include <termios.h>
+  #include <unistd.h>
+
+  static struct termios orig_termios;
+
+  static void enableRawMode(void) {
+      tcgetattr(STDIN_FILENO, &orig_termios);
+      struct termios raw = orig_termios;
+      raw.c_lflag &= ~(ECHO | ICANON);  /* turn off echo & line buffering */
+      raw.c_cc[VMIN]  = 1;              /* read returns after 1 byte      */
+      raw.c_cc[VTIME] = 0;              /* no timeout                     */
+      tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+  }
+
+  static void disableRawMode(void) {
+      tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+  }
+#endif
+
 /* ============================================================
  *  CONSTANTS  –  change these to support difficulty levels
  * ============================================================ */
@@ -51,7 +77,8 @@
 typedef struct {
     int wall_right;
     int wall_bottom;
-    int visited;        /* generation / solver helper */
+    int visited;
+    int solution;   /* 1 if this cell is on the solution path */
 } Cell;
 
 /*
@@ -142,6 +169,7 @@ void generateMaze(void) {
             maze[r][c].wall_right  = 1;
             maze[r][c].wall_bottom = 1;
             maze[r][c].visited     = 0;
+            maze[r][c].solution    = 0;
         }
     }
 
@@ -196,6 +224,8 @@ void printMaze(void) {
                 printf(" P ");
             else if (goal[0] == c && goal[1] == r)
                 printf(" G ");
+            else if(maze[r][c].solution)
+                printf(" * ");
             else
                 printf("   ");
 
@@ -250,44 +280,47 @@ void printMenu(void) {
     printf("Choose an option: ");
 }
 
-/*
- * getUserInput()
- *
- * TODO: Read a single character from stdin and return it.
- * Make sure to flush extra characters (e.g. the newline) so
- * the next read works correctly.
- */
 char getUserInput(void) {
-   
-    char c;
-
-    scanf(" %c", &c);   // space ignores newline
-
-    /* clear remaining input */
-    while (getchar() != '\n');
-  
-
+#ifdef _WIN32
+    return (char)_getch();
+#else
+    enableRawMode();
+    char c = (char)getchar();
+    disableRawMode();
     return c;
+#endif
 }
 
 /* ============================================================
- *  PLAYER LOGIC  –  TODO for the Player Logic team
+ *  PLAYER LOGIC
  * ============================================================ */
 
 /*
- * canMove(fromRow, fromCol, direction)
+ * canMove - checks wall between current cell and neighbour.
  *
- * Returns 1 if movement in `direction` is allowed from the
- * given cell, 0 if a wall blocks the way.
- *
- * direction: 'w'=UP, 's'=DOWN, 'a'=LEFT, 'd'=RIGHT
- *
- * Hint: Check wall_right / wall_bottom of the correct cell.
- * Remember the wall ownership rules at the top of this file.
+ * Wall ownership reminder:
+ *   Moving RIGHT  -> check wall_right  of (row, col)
+ *   Moving LEFT   -> check wall_right  of (row, col-1)
+ *   Moving DOWN   -> check wall_bottom of (row, col)
+ *   Moving UP     -> check wall_bottom of (row-1, col)
  */
 int canMove(int row, int col, char direction) {
-    /* TODO – Player Logic team */
-    (void)row; (void)col; (void)direction; /* suppress warnings */
+    if (direction == 'd') {                          /* RIGHT */
+        if (col >= COLS - 1) return 0;               /* outer wall */
+        return !maze[row][col].wall_right;
+    }
+    if (direction == 'a') {                          /* LEFT  */
+        if (col <= 0) return 0;
+        return !maze[row][col - 1].wall_right;
+    }
+    if (direction == 's') {                          /* DOWN  */
+        if (row >= ROWS - 1) return 0;
+        return !maze[row][col].wall_bottom;
+    }
+    if (direction == 'w') {                          /* UP    */
+        if (row <= 0) return 0;
+        return !maze[row - 1][col].wall_bottom;
+    }
     return 0;
 }
 
@@ -301,9 +334,18 @@ int canMove(int row, int col, char direction) {
  * direction: 'w'=UP, 's'=DOWN, 'a'=LEFT, 'd'=RIGHT
  */
 void movePlayer(char direction) {
-    /* TODO – Player Logic team */
-    (void)direction; /* suppress warning until implemented */
-    printf("[movePlayer] Not yet implemented.\n");
+    int col = player[0];
+    int row = player[1];
+
+    if (!canMove(row, col, direction)) {
+        printf("Ouch! There's a wall there.\n");
+        return;
+    }
+
+    if      (direction == 'd') player[0]++;
+    else if (direction == 'a') player[0]--;
+    else if (direction == 's') player[1]++;
+    else if (direction == 'w') player[1]--;
 }
 
 /*
@@ -312,27 +354,88 @@ void movePlayer(char direction) {
  * Returns 1 if the player has reached the goal, 0 otherwise.
  */
 int checkWin(void) {
-    /* TODO – Player Logic team */
-    return (0);
+    return (player[0] == goal[0] && player[1] == goal[1]);
 }
 
 /* ============================================================
- *  MAZE SOLVER  –  STRETCH GOAL
- * ============================================================ */
-
-/*
- * solveMaze()
+ *  MAZE SOLVER  (BFS from player to goal)
+ * ============================================================
  *
- * Should-have feature: find and display the solution path.
- *
- * Suggested approach: BFS or DFS from player position to goal.
- * Mark cells that are part of the solution (you could add a
- * `solution` flag to the Cell struct, or use a separate array).
- * Then call printMaze() so it renders the solution path.
+ *  BFS guarantees the shortest path.  We store a `parent`
+ *  array so we can trace back the path once the goal is found.
  */
 void solveMaze(void) {
-    /* TODO – stretch goal */
-    printf("[solveMaze] Not yet implemented.\n");
+    /* Clear any previous solution */
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++)
+            maze[r][c].solution = 0;
+
+    /* parent[r][c] stores the cell we came from: {col, row}
+       (-1,-1) means unvisited */
+    int parent[ROWS][COLS][2];
+    for (int r = 0; r < ROWS; r++)
+        for (int c = 0; c < COLS; c++) {
+            parent[r][c][0] = -1;
+            parent[r][c][1] = -1;
+        }
+
+    /* BFS queue: store {col, row} pairs */
+    int queue[ROWS * COLS][2];
+    int head = 0, tail = 0;
+
+    int startCol = player[0], startRow = player[1];
+    queue[tail][0] = startCol;
+    queue[tail][1] = startRow;
+    tail++;
+    parent[startRow][startCol][0] = startCol; /* mark start as visited */
+    parent[startRow][startCol][1] = startRow;
+
+    int found = 0;
+
+    while (head < tail && !found) {
+        int c = queue[head][0];
+        int r = queue[head][1];
+        head++;
+
+        char dirs[4] = {'w', 'd', 's', 'a'};
+        int dc[4]    = { 0,   1,   0,  -1};
+        int dr[4]    = {-1,   0,   1,   0};
+
+        for (int i = 0; i < 4; i++) {
+            if (!canMove(r, c, dirs[i])) continue;
+            int nc = c + dc[i];
+            int nr = r + dr[i];
+            if (parent[nr][nc][0] != -1) continue; /* already visited */
+
+            parent[nr][nc][0] = c;
+            parent[nr][nc][1] = r;
+            queue[tail][0] = nc;
+            queue[tail][1] = nr;
+            tail++;
+
+            if (nc == goal[0] && nr == goal[1]) {
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    if (!found) {
+        printf("No solution found!\n");
+        return;
+    }
+
+    /* Trace path back from goal to start, mark solution cells */
+    int c = goal[0], r = goal[1];
+    while (!(c == startCol && r == startRow)) {
+        maze[r][c].solution = 1;
+        int pc = parent[r][c][0];
+        int pr = parent[r][c][1];
+        c = pc; r = pr;
+    }
+    /* Don't mark the player's current cell */
+
+    printf("Solution found! Follow the '*' path.\n\n");
 }
 
 /* ============================================================
@@ -351,15 +454,15 @@ int main(void) {
             case '1':
                 generateMaze();
                 mazeReady = 1;
+                printMaze();
                 break;
 
             case '2':
                 if (!mazeReady) {
-                    printf("Please generate a maze first!\n");
+                    printf("Please generate a maze first!\n\n");
                     break;
                 }
-                /* Inner play loop */
-                printf("Use W/A/S/D to move. Press Q to quit.\n");
+                printf("Use W/A/S/D to move. Press Q to quit to menu.\n\n");
                 printMaze();
                 {
                     char move;
@@ -373,8 +476,7 @@ int main(void) {
                             movePlayer(move);
                             printMaze();
                             if (checkWin()) {
-                                /* TODO – Visuals team: print a win message */
-                                printf("*** You reached the goal! Well done! ***\n");
+                                printf("*** You reached the goal! Well done! ***\n\n");
                                 playing = 0;
                             }
                         }
@@ -384,7 +486,7 @@ int main(void) {
 
             case '3':
                 if (!mazeReady) {
-                    printf("Please generate a maze first!\n");
+                    printf("Please generate a maze first!\n\n");
                     break;
                 }
                 solveMaze();
@@ -397,7 +499,7 @@ int main(void) {
                 break;
 
             default:
-                printf("Invalid option. Please try again.\n");
+                printf("Invalid option. Please try again.\n\n");
         }
     }
 
